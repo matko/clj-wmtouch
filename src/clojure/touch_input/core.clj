@@ -2,7 +2,9 @@
   (:import IUser IAWTCallback Hooks$IGetMsgProc
            [com.sun.jna Native Pointer Callback]
            [com.sun.jna.win32 StdCallLibrary StdCallLibrary$StdCallCallback]
-           [com.sun.jna.platform.win32 WinUser WinDef$HWND WinDef$WPARAM WinDef$LPARAM BaseTSD$LONG_PTR WinDef$LRESULT]))
+           [com.sun.jna.platform.win32 WinUser WinDef$HWND WinDef$WPARAM WinDef$LPARAM BaseTSD$LONG_PTR WinDef$LRESULT WinNT$HANDLE]
+           java.util.Date))
+            
 
 (def nativeuser (Native/loadLibrary "user32" IUser))
 (def NativeKernel (gen-interface :name NativeKernel
@@ -29,9 +31,9 @@
     @result))
 
 (defn register-touch-window [handle]
-  (invoke-void-method #(.RegisterTouchWindow nativeuser
-                                             handle
-                                             0)))
+  (.RegisterTouchWindow nativeuser
+                        handle
+                        0))
         
 (defn handle [component]
   (-> (.. component getPeer getHWnd)
@@ -71,8 +73,63 @@
     
 
 (defn remove-message-hook! [hook]
-  (.UnhookWindowsHookEx hook))
+  (.UnhookWindowsHookEx nativeuser hook))
 
-(defn setup-touch! [callback])
+(def wmtouch 0x240)
+(def wmgesture 0x119)
 
-(defn stop-touch! [])
+(defn low-word [num]
+  (bit-and 0xFFFF num))
+
+(defn as-handle [param]
+  (WinNT$HANDLE. (.toPointer param)))
+
+(def ^:dynamic wmtouch-callback nil)
+
+(defn decode-dwflags [dwflags]
+  (cond (bit-test dwflags 2) :up
+        (bit-test dwflags 1) :down
+        (bit-test dwflags 0) :move))
+
+(defn handle-wmtouch [touch-count handle]
+  (let [ti (TouchInput.)
+        inputs (.toArray ti touch-count)
+        size (.size ti)]
+    (.GetTouchInputInfo nativeuser handle touch-count inputs size)
+    (wmtouch-callback (map (fn [input]
+                             {:x (int (/ (.x input) 100))
+                              :y (int (/ (.y input) 100))
+                              :id (.dwID input)
+                              :dwFlags (decode-dwflags (.dwFlags input))})
+                           inputs))))
+;    (swap! touch-events conj (map (fn [input]
+;                                    {:x (.x input)
+;                                     :y (.y input)
+;                                     :id (.dwID input)
+;                                     :dwFlags (.dwFlags input)})
+;                                  inputs))))
+ 
+(def last-event-time 0)
+
+(def received-event-types (atom #{}))
+
+(defn handle-event [code wparam lparam]
+  (def last-event-time (Date.))
+  (swap! received-event-types conj code)
+  (def foomoo wmtouch-callback)
+  (when (= wmtouch code)
+    (handle-wmtouch (-> wparam .intValue low-word)
+                    (as-handle lparam)))
+  -1)
+
+(defn setup-touch! [frame callback]
+  (invoke-void-method (fn []
+                        (let [handle (handle frame)
+                              handle-event-proxy (fn [code wparam lparam]
+                                                   (binding [wmtouch-callback callback]
+                                                     (handle-event code wparam lparam)))]
+                          (register-touch-window handle)
+                          (set-message-hook! handle handle-event-proxy)))))
+
+(defn stop-touch! [[hook _]]
+  (remove-message-hook! hook))

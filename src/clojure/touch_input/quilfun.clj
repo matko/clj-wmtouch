@@ -25,57 +25,14 @@
   :draw draw                        ;;Specify the draw fn
   :size [323 200])                  ;;You struggle to beat the golden ratio
 
-(def lolsatom (atom #{}))
+(def points-list (atom (list)))
 
-(def wmtouch 0x240)
-(def wmgesture 0x119)
-(def touch-events (atom '()))
-
-(defn low-word [num]
-  (bit-and 0xFFFF num))
-
-(defn as-handle [param]
-  (WinNT$HANDLE. (.toPointer param)))
-
-(def argh (atom :none))
-
-(defn handle-wmtouch [touch-count handle]
-  (let [ti (TouchInput.)
-        inputs (.toArray ti touch-count)
-        size (.size ti)]
-    (reset! argh :first)
-    (.GetTouchInputInfo nativeuser handle touch-count inputs size)
-    (reset! argh :second)
-    (swap! touch-events conj (map (fn [input]
-                                    {:x (.x input)
-                                     :y (.y input)
-                                     :id (.dwID input)
-                                     :dwFlags (.dwFlags input)})
-                                  inputs)))
-  -1)
-
-(def last-event-time 0)
-
-(def foomoo nil)
-
-(defn yay-events [code wparam lparam]
-  (def last-event-time (Date.))
-  (swap! lolsatom conj code)
-  (def foomoo (type code))
-  (when (= wmtouch code)
-    (reset! argh :beforefirst)
-    (handle-wmtouch (-> wparam .intValue low-word)
-                    (as-handle lparam)))
-  -1)
-
-(defn yay-events-proxy [code wparam lparam]
-  (yay-events code wparam lparam))
-
+(defn touch-fun [points]
+  (swap! points-list conj points))
+  
 (def hook nil)
 
 (defn ohsuchfun []
-  (invoke-void-method (fn []
-                        (let [handle (handle example)]
-                          (register-touch-window handle)
-                          (def hook (set-message-hook! handle yay-events-proxy))))))
-
+  (def hook
+    (setup-touch! example
+                  #(touch-fun %))))
